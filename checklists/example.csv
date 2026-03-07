@@ -1,0 +1,5 @@
+Welcome! 👋\nThis is the example checklist.;;30s;
+Read the instructions 📋\nEach step can have text, an emoji orbiting the screen, an image, and a timer.;🔵;;10s;
+Auto-proceed example ⏩\nThis step will move forward automatically when the timer runs out.;⚡;;8s;auto
+Timer with manual override 🎛️\nAuto-proceed is ON by default here, but you can uncheck it.;🟠;;15s;auto
+Last step 🎉\nPress **Finish** to celebrate!;🌟;;;

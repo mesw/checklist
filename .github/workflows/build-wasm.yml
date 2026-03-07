@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# build-wasm.yml
+#
+# Builds the Qt WASM binary and commits the output to wasm/ in the main branch.
+# Run this manually (workflow_dispatch) or automatically when C++/QML changes.
+#
+# Forks DO NOT need to run this workflow — they use the committed wasm/ artifacts.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Build WASM
+
+on:
+  workflow_dispatch:   # manual trigger
+  push:
+    branches: [main]
+    paths:             # only rebuild when app code actually changes
+      - 'src/**'
+      - 'qml/**'
+      - 'CMakeLists.txt'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    env:
+      QT_VERSION: 6.8.3
+      EMSDK_VERSION: 3.1.50   # version required by Qt 6.8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Emscripten ───────────────────────────────────────────────────────
+      - name: Install Emscripten ${{ env.EMSDK_VERSION }}
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git ~/emsdk
+          ~/emsdk/emsdk install  ${{ env.EMSDK_VERSION }}
+          ~/emsdk/emsdk activate ${{ env.EMSDK_VERSION }}
+
+      # ── Qt host tools (needed by the WASM cross-build) ───────────────────
+      - name: Cache Qt host
+        id: cache-qt-host
+        uses: actions/cache@v4
+        with:
+          path: ~/Qt/${{ env.QT_VERSION }}/gcc_64
+          key: qt-${{ env.QT_VERSION }}-gcc64
+
+      - name: Install Qt host (gcc_64)
+        if: steps.cache-qt-host.outputs.cache-hit != 'true'
+        run: |
+          pip install aqtinstall
+          aqt install-qt linux desktop ${{ env.QT_VERSION }} gcc_64 \
+            --modules qtquick qtquickcontrols2 qtimageformats \
+            --outputdir ~/Qt
+
+      # ── Qt WASM ──────────────────────────────────────────────────────────
+      - name: Cache Qt WASM
+        id: cache-qt-wasm
+        uses: actions/cache@v4
+        with:
+          path: ~/Qt/${{ env.QT_VERSION }}/wasm_singlethread
+          key: qt-${{ env.QT_VERSION }}-wasm-singlethread
+
+      - name: Install Qt WASM (singlethread)
+        if: steps.cache-qt-wasm.outputs.cache-hit != 'true'
+        run: |
+          pip install aqtinstall
+          aqt install-qt linux desktop ${{ env.QT_VERSION }} wasm_singlethread \
+            --modules qtquick qtquickcontrols2 qtimageformats \
+            --outputdir ~/Qt
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Configure CMake for WASM
+        run: |
+          source ~/emsdk/emsdk_env.sh
+          cmake -B build-wasm \
+            -DCMAKE_TOOLCHAIN_FILE=~/Qt/${{ env.QT_VERSION }}/wasm_singlethread/lib/cmake/Qt6/qt.toolchain.cmake \
+            -DQT_HOST_PATH=~/Qt/${{ env.QT_VERSION }}/gcc_64 \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -G Ninja
+
+      - name: Build
+        run: |
+          source ~/emsdk/emsdk_env.sh
+          cmake --build build-wasm --parallel
+
+      # ── Collect artifacts ─────────────────────────────────────────────────
+      - name: Collect WASM artifacts into wasm/
+        run: |
+          mkdir -p wasm
+          # Qt WASM build output: .js  .wasm  .data  qtloader.js  (no .html — we use index.html)
+          cp build-wasm/checklist.js       wasm/
+          cp build-wasm/checklist.wasm     wasm/
+          cp build-wasm/qtloader.js        wasm/ 2>/dev/null || \
+            cp ~/Qt/${{ env.QT_VERSION }}/wasm_singlethread/plugins/platforms/qtloader.js wasm/ 2>/dev/null || true
+          # .data is only generated when qt_add_resources adds files; may not exist
+          [ -f build-wasm/checklist.data ] && cp build-wasm/checklist.data wasm/ || true
+
+          echo "WASM artifacts:"
+          ls -lh wasm/
+
+      # ── Commit back to main ───────────────────────────────────────────────
+      - name: Commit wasm/ artifacts
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add wasm/
+          git diff --cached --quiet && echo "No changes to commit" || \
+            git commit -m "chore: update WASM build artifacts [skip ci]"
+          git push

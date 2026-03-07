@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# deploy-pages.yml
+#
+# Deploys the app to GitHub Pages.
+# Runs on EVERY push to main — including forks.
+# No compilation. Takes ~10 seconds.
+#
+# What it does:
+#   1. Generates checklists/index.json from all *.csv files present
+#   2. Assembles the deployment folder: wasm/ + checklists/ + index.html
+#   3. Publishes to GitHub Pages
+# ─────────────────────────────────────────────────────────────────────────────
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Allow only one deployment at a time
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages:    write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Generate checklists/index.json ────────────────────────────────────
+      - name: Generate index.json
+        run: |
+          python3 - << 'PYEOF'
+          import glob, json, os, sys
+
+          csv_files = sorted(glob.glob("checklists/*.csv"))
+          names = [os.path.splitext(os.path.basename(f))[0] for f in csv_files]
+
+          out_path = "checklists/index.json"
+          with open(out_path, "w") as f:
+              json.dump(names, f, indent=2)
+
+          print(f"Generated {out_path} with {len(names)} entries: {names}")
+          PYEOF
+
+      # ── Assemble deployment directory ─────────────────────────────────────
+      - name: Assemble deployment folder
+        run: |
+          mkdir -p _site
+
+          # Pre-built WASM artifacts (committed to repo)
+          if [ -d wasm ] && [ "$(ls -A wasm/)" ]; then
+            cp -r wasm/. _site/
+            echo "Copied WASM artifacts"
+          else
+            echo "⚠️  wasm/ is empty — run the 'Build WASM' workflow first"
+          fi
+
+          # Checklists (CSV files + generated index.json)
+          mkdir -p _site/checklists
+          cp checklists/*.csv         _site/checklists/ 2>/dev/null || true
+          cp checklists/index.json    _site/checklists/
+          # Copy any images referenced by CSV files
+          cp checklists/*.png         _site/checklists/ 2>/dev/null || true
+          cp checklists/*.jpg         _site/checklists/ 2>/dev/null || true
+          cp checklists/*.jpeg        _site/checklists/ 2>/dev/null || true
+          cp checklists/*.gif         _site/checklists/ 2>/dev/null || true
+          cp checklists/*.webp        _site/checklists/ 2>/dev/null || true
+
+          # Styled loader page
+          cp index.html _site/
+
+          echo "Deployment contents:"
+          find _site -type f | sort
+
+      # ── Deploy ───────────────────────────────────────────────────────────
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
