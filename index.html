@@ -2,215 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta http-equiv="refresh" content="0;url=wasm/checklist.html">
   <title>Checklist</title>
   <style>
-    /* ── Design tokens (mirrors the QML palette) ─────────────────────── */
-    :root {
-      --bg:         #FAFAF7;
-      --surface:    #FFFFFF;
-      --ink:        #1A1714;
-      --muted:      #78716C;
-      --amber:      #D97706;
-      --amber-dark: #92400E;
-      --green:      #15803D;
-      --border:     #E7E5E0;
-    }
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    html, body {
-      width: 100%; height: 100%;
-      background: var(--bg);
-      font-family: 'Georgia', 'Charter', 'Palatino', serif;
-      color: var(--ink);
-      overflow: hidden;
-    }
-
-    /* ── Loader screen (shown until Qt initialises) ───────────────────── */
-    #loader {
-      position: fixed; inset: 0;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 2rem;
-      background: var(--bg);
-      z-index: 100;
-      transition: opacity 0.4s ease;
-    }
-
-    #loader.hidden {
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .loader-logo {
-      display: flex; align-items: center; gap: 1rem;
-    }
-
-    .loader-bar {
-      width: 4px; height: 2.8rem;
-      background: var(--amber);
-      border-radius: 2px;
-    }
-
-    .loader-title {
-      font-size: clamp(1.4rem, 4vw, 2.2rem);
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      color: var(--ink);
-    }
-
-    .loader-subtitle {
-      font-size: clamp(0.85rem, 2vw, 1rem);
-      color: var(--muted);
-      text-align: center;
-      max-width: 320px;
-      line-height: 1.5;
-    }
-
-    /* Progress track */
-    .progress-track {
-      width: min(320px, 70vw);
-      height: 6px;
-      background: var(--border);
-      border-radius: 3px;
-      overflow: hidden;
-    }
-
-    .progress-fill {
-      height: 100%;
-      background: var(--amber);
-      border-radius: 3px;
-      width: 0%;
-      transition: width 0.3s ease;
-    }
-
-    .progress-label {
-      font-size: 0.8rem;
-      color: var(--muted);
-      font-variant-numeric: tabular-nums;
-      letter-spacing: 0.02em;
-    }
-
-    /* Error state */
-    .error-box {
-      display: none;
-      background: #FFF1F2;
-      border: 1px solid #FECACA;
-      border-radius: 10px;
-      padding: 1.25rem 1.5rem;
-      max-width: min(380px, 88vw);
-      text-align: center;
-    }
-
-    .error-box.visible { display: block; }
-
-    .error-box h2 {
-      font-size: 1.05rem;
-      color: #DC2626;
-      margin-bottom: 0.5rem;
-    }
-
-    .error-box p {
-      font-size: 0.875rem;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-
-    /* ── Qt canvas container ─────────────────────────────────────────── */
-    #qtcontainer {
-      position: fixed; inset: 0;
-      width: 100%; height: 100%;
-    }
-
-    /* Qt creates a canvas inside this div — make it fill the viewport */
-    #qtcontainer canvas {
-      display: block;
-      width:  100% !important;
-      height: 100% !important;
+    body {
+      margin: 0;
+      background: #FAFAF7;
+      font-family: Georgia, serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: #78716C;
+      font-size: 1.1rem;
     }
   </style>
 </head>
 <body>
-
-  <!-- Loading screen -->
-  <div id="loader">
-    <div class="loader-logo">
-      <div class="loader-bar"></div>
-      <span class="loader-title">Checklist</span>
-    </div>
-
-    <div class="progress-track">
-      <div class="progress-fill" id="progressFill"></div>
-    </div>
-    <span class="progress-label" id="progressLabel">Initialising…</span>
-
-    <div class="error-box" id="errorBox">
-      <h2>Failed to load</h2>
-      <p id="errorText">An error occurred while starting the application.</p>
-    </div>
-  </div>
-
-  <!-- Qt renders into this div -->
-  <div id="qtcontainer"></div>
-
-  <!-- Qt WASM loader (produced by the build) -->
-  <script src="qtloader.js"></script>
-  <script>
-    const fill  = document.getElementById('progressFill');
-    const label = document.getElementById('progressLabel');
-    const loader = document.getElementById('loader');
-
-    function setProgress(pct, text) {
-      fill.style.width = pct + '%';
-      label.textContent = text;
-    }
-
-    function showError(msg) {
-      const box = document.getElementById('errorBox');
-      document.getElementById('errorText').textContent = msg;
-      box.classList.add('visible');
-      label.style.display = 'none';
-      fill.parentElement.style.display = 'none';
-    }
-
-    setProgress(10, 'Loading application…');
-
-    QtLoader.load({
-      applicationName:  'checklist',
-      containerElements: [document.getElementById('qtcontainer')],
-
-      showLoader: function(status) {
-        // status is e.g. "Loading Qt libraries…" from qtloader.js
-        const map = {
-          'Loading Qt libraries':     [30, 'Loading Qt libraries…'],
-          'Preparing user interface': [70, 'Preparing user interface…'],
-          'Completed':                [100, 'Starting…'],
-        };
-        for (const [key, [pct, txt]] of Object.entries(map)) {
-          if (status && status.includes(key)) { setProgress(pct, txt); return; }
-        }
-        setProgress(50, status || 'Loading…');
-      },
-
-      showError: function(errorText) {
-        showError(errorText || 'Unknown error');
-      },
-
-      showExit: function() {
-        // App called Qt::quit() — show a polite message
-        loader.classList.remove('hidden');
-        setProgress(100, 'Application exited.');
-      },
-
-      onLoaded: function() {
-        setProgress(100, 'Ready!');
-        // Short delay so the "Ready!" flash is visible before fade
-        setTimeout(() => loader.classList.add('hidden'), 350);
-      },
-    }).catch(function(err) {
-      showError(err ? err.toString() : 'Could not load WebAssembly module.');
-    });
-  </script>
+  Redirecting…
+  <!-- If meta-refresh is blocked, this link works: -->
+  <a href="wasm/checklist.html" style="color:#D97706;margin-left:0.5em;">Open app</a>
 </body>
 </html>

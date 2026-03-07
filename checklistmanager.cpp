@@ -11,20 +11,27 @@
 #include <QUrl>
 
 #ifdef CHECKLIST_WASM
-// Access the browser's window.location to build an absolute base URL.
-// QNetworkAccessManager in WASM translates to XMLHttpRequest/fetch,
-// which resolves relative URLs against the document origin — but Qt's
-// QUrl sometimes classifies bare relative paths as "file" scheme before
-// they reach the network stack. Constructing absolute URLs avoids this.
+// The app is served from  https://user.github.io/repo/wasm/checklist.html
+// checklists/ lives one level up: https://user.github.io/repo/checklists/
+// We strip both the filename AND the "wasm/" directory component.
 #include <emscripten/val.h>
 
 static QString wasmBaseUrl()
 {
-    // Returns e.g. "https://user.github.io/checklist/"
     auto href = emscripten::val::global("window")["location"]["href"].as<std::string>();
     QString s = QString::fromStdString(href);
-    int last = s.lastIndexOf(QLatin1Char('/'));
-    return s.left(last + 1);   // keep trailing slash
+
+    // Remove the filename  → …/repo/wasm/
+    int slash = s.lastIndexOf(QLatin1Char('/'));
+    s = s.left(slash + 1);
+
+    // Remove the wasm/ subdirectory → …/repo/
+    // (handles any single-level subdirectory the file sits in)
+    if (s.endsWith(QStringLiteral("wasm/"))) {
+        s.chop(5);  // length of "wasm/"
+    }
+
+    return s;  // always ends with '/'
 }
 #endif
 
@@ -36,6 +43,7 @@ ChecklistManager::ChecklistManager(QObject *parent)
 {
 #ifdef CHECKLIST_WASM
     m_wasmBaseUrl = wasmBaseUrl();
+    qDebug() << "WASM base URL:" << m_wasmBaseUrl;
 #endif
     refreshCsvList();
 }
@@ -53,17 +61,15 @@ void ChecklistManager::setBusy(bool b)
 static bool validIdx(int i, int n) { return n > 0 && i >= 0 && i < n; }
 
 // ---------------------------------------------------------------------------
-// CSV content parser — shared by native (file) and WASM (network) paths
-//
-// Format:  text ; emoji ; image ; timer ; auto
+// CSV parser — shared by both paths
+// Format: text ; emoji ; image ; timer ; auto
 // ---------------------------------------------------------------------------
 void ChecklistManager::parseCsvContent(const QString &content, const QString &sourceId)
 {
     m_items.clear();
     m_currentIndex = 0;
 
-    QStringList lines = content.split(QLatin1Char('\n'));
-    for (const QString &raw : lines) {
+    for (const QString &raw : content.split(QLatin1Char('\n'))) {
         const QString line = raw.trimmed();
         if (line.isEmpty()) continue;
 
@@ -91,13 +97,8 @@ void ChecklistManager::parseCsvContent(const QString &content, const QString &so
         m_items << item;
     }
 
-    // Store the display title — sourceId is either a file base name or URL path
-    QFileInfo fi(sourceId);
-    m_listTitle = fi.baseName();
-
-    // In WASM, store the prefix used to resolve image URLs
-    // (images are siblings of the CSV in the checklists/ directory)
-    m_currentCsvDir = fi.absolutePath();
+    m_listTitle     = QFileInfo(sourceId).baseName();
+    m_currentCsvDir = QFileInfo(sourceId).absolutePath();
 
     emit listLoadedChanged();
     emit currentIndexChanged();
@@ -113,9 +114,9 @@ void ChecklistManager::refreshCsvList()
     emit csvFilesChanged();
 
 #ifdef CHECKLIST_WASM
-    // ── WASM: fetch checklists/index.json from the server ──────────────────
     setBusy(true);
     const QUrl url(m_wasmBaseUrl + QStringLiteral("checklists/index.json"));
+    qDebug() << "Fetching index.json from:" << url;
     auto *reply = m_nam->get(QNetworkRequest(url));
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
@@ -123,27 +124,25 @@ void ChecklistManager::refreshCsvList()
         setBusy(false);
 
         if (reply->error() != QNetworkReply::NoError) {
-            qWarning() << "Failed to fetch index.json:" << reply->errorString();
+            qWarning() << "index.json fetch failed:" << reply->errorString();
             return;
         }
 
         const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-        if (!doc.isArray()) {
-            qWarning() << "index.json is not a JSON array";
-            return;
-        }
+        if (!doc.isArray()) { qWarning() << "index.json: not a JSON array"; return; }
 
         for (const QJsonValue &v : doc.array()) {
-            const QString name = v.toString();
+            const QString name = v.toString().trimmed();
             if (name.isEmpty()) continue;
             m_csvFileNames << name;
             m_csvFilePaths << (m_wasmBaseUrl + QStringLiteral("checklists/") + name + QStringLiteral(".csv"));
         }
+
+        qDebug() << "Found checklists:" << m_csvFileNames;
         emit csvFilesChanged();
     });
 
 #else
-    // ── Native: scan working directory for *.csv ───────────────────────────
     QDir dir(QDir::currentPath());
     const QFileInfoList files =
         dir.entryInfoList({QStringLiteral("*.csv")}, QDir::Files, QDir::Name);
@@ -165,8 +164,8 @@ void ChecklistManager::loadCsv(const QString &filePath)
     emit listLoadedChanged();
 
 #ifdef CHECKLIST_WASM
-    // ── WASM: filePath is an absolute https:// URL built in refreshCsvList ──
     setBusy(true);
+    qDebug() << "Fetching CSV:" << filePath;
     auto *reply = m_nam->get(QNetworkRequest(QUrl(filePath)));
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, filePath]() {
@@ -174,7 +173,7 @@ void ChecklistManager::loadCsv(const QString &filePath)
         setBusy(false);
 
         if (reply->error() != QNetworkReply::NoError) {
-            qWarning() << "Failed to fetch CSV:" << reply->errorString();
+            qWarning() << "CSV fetch failed:" << reply->errorString();
             return;
         }
 
@@ -182,7 +181,6 @@ void ChecklistManager::loadCsv(const QString &filePath)
     });
 
 #else
-    // ── Native: read from local filesystem ────────────────────────────────
     QFileInfo fi(filePath);
     m_currentCsvDir = fi.absolutePath();
     m_listTitle     = fi.baseName();
@@ -231,39 +229,28 @@ QString ChecklistManager::currentText() const
     return validIdx(m_currentIndex, m_items.size())
         ? m_items.at(m_currentIndex).text : QString{};
 }
-
 QString ChecklistManager::currentEmoji() const
 {
     return validIdx(m_currentIndex, m_items.size())
         ? m_items.at(m_currentIndex).emoji : QString{};
 }
-
 QString ChecklistManager::currentImageUrl() const
 {
     if (!validIdx(m_currentIndex, m_items.size())) return {};
     const QString &img = m_items.at(m_currentIndex).imagePath;
     if (img.isEmpty()) return {};
-
 #ifdef CHECKLIST_WASM
-    // Images live alongside the CSV files on the server
     return m_wasmBaseUrl + QStringLiteral("checklists/") + img;
 #else
     const QFileInfo fi(m_currentCsvDir + QLatin1Char('/') + img);
     return fi.exists() ? QStringLiteral("file://") + fi.absoluteFilePath() : QString{};
 #endif
 }
-
-int ChecklistManager::currentTimerSecs() const
-{
-    return validIdx(m_currentIndex, m_items.size())
-        ? m_items.at(m_currentIndex).timerSeconds : -1;
+int  ChecklistManager::currentTimerSecs()   const {
+    return validIdx(m_currentIndex, m_items.size()) ? m_items.at(m_currentIndex).timerSeconds : -1;
 }
-
-bool ChecklistManager::currentAutoProceed() const
-{
-    return validIdx(m_currentIndex, m_items.size())
-        ? m_items.at(m_currentIndex).autoProceed : false;
+bool ChecklistManager::currentAutoProceed() const {
+    return validIdx(m_currentIndex, m_items.size()) ? m_items.at(m_currentIndex).autoProceed : false;
 }
-
 bool ChecklistManager::hasNext() const { return m_currentIndex < m_items.size() - 1; }
 bool ChecklistManager::hasPrev() const { return m_currentIndex > 0; }
