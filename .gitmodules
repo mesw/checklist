@@ -1,0 +1,3 @@
+[submodule "third_party/noto-emoji"]
+	path = third_party/noto-emoji
+	url = https://github.com/googlefonts/noto-emoji.git
