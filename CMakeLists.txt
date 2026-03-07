@@ -33,9 +33,15 @@ qt_add_qml_module(checklist
 #
 # We use the monochrome TTF (not the color WOFF2) because Qt's text engine
 # handles outline fonts reliably on all platforms including WASM.
-set(EMOJI_FONT "${CMAKE_SOURCE_DIR}/third_party/noto-emoji/fonts/NotoEmoji-Regular.ttf")
+set(EMOJI_FONT "${CMAKE_SOURCE_DIR}/third_party/noto-emoji/fonts/NotoColorEmoji.ttf")
 
 if(EXISTS "${EMOJI_FONT}")
+    # Qt resource system requires relative paths — set an alias so the
+    # absolute submodule path is exposed as "NotoColorEmoji.ttf" inside
+    # the resource prefix /fonts/
+    set_source_files_properties("${EMOJI_FONT}"
+        PROPERTIES QT_RESOURCE_ALIAS "NotoColorEmoji.ttf"
+    )
     qt_add_resources(checklist "appfonts"
         PREFIX "/fonts"
         FILES "${EMOJI_FONT}"

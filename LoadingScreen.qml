@@ -74,7 +74,7 @@ Item {
                 }
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text:  "Add .csv files to the checklists/ folder"
+                    text:  "➡️ Add .csv files to the checklists/ folder"
                     color: ApplicationWindow.window.clrMuted
                     font.pixelSize: ApplicationWindow.window.u * 3
                 }

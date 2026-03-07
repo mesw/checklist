@@ -17,9 +17,9 @@ int main(int argc, char *argv[])
     // unaffected because Qt always prefers the primary font for those.
 #ifdef HAS_EMOJI_FONT
     const int id = QFontDatabase::addApplicationFont(
-        QStringLiteral(":/fonts/NotoEmoji-Regular.ttf"));
+        QStringLiteral(":/fonts/NotoColorEmoji.ttf"));
     if (id == -1)
-        qWarning("Failed to load NotoEmoji-Regular.ttf from resources");
+        qWarning("Failed to load NotoColorEmoji.ttf from resources");
 #endif
 
     QQmlApplicationEngine engine;
