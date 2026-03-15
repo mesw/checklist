@@ -58,6 +58,7 @@ if(EXISTS "${EMOJI_FONT}")
     qt_add_resources(checklist "appfonts"
         PREFIX "/fonts"
         FILES "${EMOJI_FONT}"
+        BIG_RESOURCES
     )
     target_compile_definitions(checklist PRIVATE HAS_EMOJI_FONT)
     message(STATUS "Emoji font found: ${EMOJI_FONT}")
@@ -129,16 +130,14 @@ add_custom_target(checklist_index ALL
     VERBATIM
 )
 
-# Desktop only: copy checklists/ next to the executable after each build
-if(NOT EMSCRIPTEN)
-    add_custom_command(TARGET checklist POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/checklists"
-            "$<TARGET_FILE_DIR:checklist>/checklists"
-        COMMENT "Copying checklists to output directory"
-        VERBATIM
-    )
-endif()
+# Copy checklists/ next to the output after each build (desktop and WASM)
+add_custom_command(TARGET checklist POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/checklists"
+        "$<TARGET_FILE_DIR:checklist>/checklists"
+    COMMENT "Copying checklists to output directory"
+    VERBATIM
+)
 
 install(TARGETS checklist RUNTIME DESTINATION bin)
 
