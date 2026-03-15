@@ -4,12 +4,16 @@
 #include <QFontDatabase>
 
 #include "checklistmanager.h"
+#include "languagemanager.h"
 
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Checklist"));
     app.setApplicationVersion(QStringLiteral("1.0"));
+
+    // ── Language (must be set up before the engine loads any QML) ────────
+    LanguageManager langManager;
 
     // ── Emoji font ────────────────────────────────────────────────────────
     // Loaded on all platforms; critical for WASM which has no system fonts.
@@ -27,6 +31,12 @@ int main(int argc, char *argv[])
     ChecklistManager manager;
     engine.rootContext()->setContextProperty(
         QStringLiteral("checklistManager"), &manager);
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("languageManager"), &langManager);
+
+    // Retranslate all live qsTr() bindings whenever the language changes.
+    QObject::connect(&langManager, &LanguageManager::languageChanged,
+                     &engine,      &QQmlApplicationEngine::retranslate);
 
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreationFailed,

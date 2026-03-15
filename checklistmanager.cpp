@@ -8,6 +8,8 @@
 #include <QNetworkRequest>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QCoreApplication>
+#include <QRegularExpression>
 #include <QUrl>
 
 #ifdef CHECKLIST_WASM
@@ -60,6 +62,25 @@ void ChecklistManager::setBusy(bool b)
 
 static bool validIdx(int i, int n) { return n > 0 && i >= 0 && i < n; }
 
+// Read just the first # heading from a .md file without parsing the whole thing
+static QString extractMdTitle(const QString &filePath)
+{
+    QFile f(filePath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
+    QTextStream in(&f);
+    in.setEncoding(QStringConverter::Utf8);
+    while (!in.atEnd()) {
+        const QString line = in.readLine().trimmed();
+        if (line.startsWith(QStringLiteral("# ")) && !line.startsWith(QStringLiteral("## "))) {
+            QString title = line.mid(2).trimmed();
+            title.remove(QStringLiteral("**"));
+            return title;
+        }
+    }
+    return {};
+}
+
+
 // ---------------------------------------------------------------------------
 // CSV parser — shared by both paths
 // Format: text ; emoji ; image ; timer ; auto
@@ -105,12 +126,120 @@ void ChecklistManager::parseCsvContent(const QString &content, const QString &so
 }
 
 // ---------------------------------------------------------------------------
+// Markdown parser
+// Format:
+//   # Title          → sets m_listTitle (not a step)
+//   ## Step heading  → new step; heading text becomes item.text
+//   <!-- <tok> ... → metadata: <emoji> <Ns/Nm> <auto> <file.ext>
+//   other lines      → appended to current step body
+// ---------------------------------------------------------------------------
+void ChecklistManager::parseMdContent(const QString &content, const QString &sourceId)
+{
+    m_items.clear();
+    m_currentIndex = 0;
+    m_listTitle     = QFileInfo(sourceId).baseName();
+    m_currentCsvDir = QFileInfo(sourceId).absolutePath();
+
+    ChecklistItem current;
+    bool hasCurrent = false;
+    QStringList bodyLines;
+
+    static const QRegularExpression tokenRe(QStringLiteral("<([^>]+)>"));
+    static const QRegularExpression timerRe(QStringLiteral("^(\\d+)([sm])$"));
+
+    auto flush = [&]() {
+        if (!hasCurrent) return;
+        if (!bodyLines.isEmpty()) {
+            current.text += QStringLiteral("\\n") + bodyLines.join(QStringLiteral("\\n"));
+            bodyLines.clear();
+        }
+        if (current.timerSeconds <= 0)
+            current.autoProceed = false;
+        m_items << current;
+        current     = ChecklistItem{};
+        hasCurrent  = false;
+    };
+
+    for (const QString &rawLine : content.split(QLatin1Char('\n'))) {
+        const QString line = rawLine.trimmed();
+
+        // Title page  (# but not ##)
+        if (line.startsWith(QStringLiteral("# ")) && !line.startsWith(QStringLiteral("## "))) {
+            flush();
+            current.text    = line.mid(2).trimmed();
+            current.isTitle = true;
+            hasCurrent      = true;
+            m_listTitle     = current.text;
+            m_listTitle.remove(QStringLiteral("**"));
+            continue;
+        }
+
+        // New step  (##)
+        if (line.startsWith(QStringLiteral("## "))) {
+            flush();
+            current.text = line.mid(3).trimmed();
+            hasCurrent   = true;
+            continue;
+        }
+
+        if (!hasCurrent) continue;
+
+        // Metadata line  <!-- <tok> <tok> ... -->
+        if (line.startsWith(QStringLiteral("<!--")) && line.contains(QStringLiteral("-->"))) {
+            // Strip <!-- ... --> wrappers before tokenising so the opening
+            // "<!--" is not consumed as part of the first <token> match.
+            const int end = line.lastIndexOf(QStringLiteral("-->"));
+            const QString meta = line.mid(4, end - 4);  // between <!-- and -->
+            auto it = tokenRe.globalMatch(meta);
+            while (it.hasNext()) {
+                const QString token = it.next().captured(1).trimmed();
+                if (token.isEmpty()) continue;
+
+                if (token.compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0) {
+                    current.autoProceed = true;
+                    continue;
+                }
+
+                const auto tm = timerRe.match(token);
+                if (tm.hasMatch()) {
+                    int val = tm.captured(1).toInt();
+                    if (tm.captured(2) == QLatin1Char('m')) val *= 60;
+                    current.timerSeconds = val;
+                    continue;
+                }
+
+                // contains '.' → image filename; otherwise → emoji
+                if (token.contains(QLatin1Char('.')))
+                    current.imagePath = token;
+                else
+                    current.emoji = token;
+            }
+            continue;
+        }
+
+        // Body text
+        if (!line.isEmpty())
+            bodyLines << line;
+    }
+
+    flush();
+
+    // Append a copy of the title page as the final step (end screen)
+    if (!m_items.isEmpty() && m_items.first().isTitle)
+        m_items.append(m_items.first());
+
+    emit listLoadedChanged();
+    emit currentIndexChanged();
+}
+
+// ---------------------------------------------------------------------------
 // refreshCsvList
 // ---------------------------------------------------------------------------
 void ChecklistManager::refreshCsvList()
 {
     m_csvFilePaths.clear();
     m_csvFileNames.clear();
+    m_csvFileTitles.clear();
     emit csvFilesChanged();
 
 #ifdef CHECKLIST_WASM
@@ -132,10 +261,20 @@ void ChecklistManager::refreshCsvList()
         if (!doc.isArray()) { qWarning() << "index.json: not a JSON array"; return; }
 
         for (const QJsonValue &v : doc.array()) {
-            const QString name = v.toString().trimmed();
+            QString name, title;
+            if (v.isString()) {
+                name  = v.toString().trimmed();
+                title = name;
+            } else {
+                const QJsonObject obj = v.toObject();
+                name  = obj.value(QStringLiteral("name")).toString().trimmed();
+                title = obj.value(QStringLiteral("title")).toString().trimmed();
+            }
             if (name.isEmpty()) continue;
-            m_csvFileNames << name;
-            m_csvFilePaths << (m_wasmBaseUrl + QStringLiteral("checklists/") + name + QStringLiteral(".csv"));
+            if (title.isEmpty()) title = name;
+            m_csvFileNames  << name;
+            m_csvFileTitles << title;
+            m_csvFilePaths  << (m_wasmBaseUrl + QStringLiteral("checklists/") + name + QStringLiteral(".md"));
         }
 
         qDebug() << "Found checklists:" << m_csvFileNames;
@@ -143,12 +282,16 @@ void ChecklistManager::refreshCsvList()
     });
 
 #else
-    QDir dir(QDir::currentPath());
+    QDir dir(QCoreApplication::applicationDirPath() + QStringLiteral("/checklists"));
     const QFileInfoList files =
-        dir.entryInfoList({QStringLiteral("*.csv")}, QDir::Files, QDir::Name);
+        dir.entryInfoList({QStringLiteral("*.md"), QStringLiteral("*.csv")}, QDir::Files, QDir::Name);
     for (const QFileInfo &fi : files) {
         m_csvFilePaths << fi.absoluteFilePath();
         m_csvFileNames << fi.baseName();
+        QString title;
+        if (fi.suffix().toLower() == QStringLiteral("md"))
+            title = extractMdTitle(fi.absoluteFilePath());
+        m_csvFileTitles << (title.isEmpty() ? fi.baseName() : title);
     }
     emit csvFilesChanged();
 #endif
@@ -163,21 +306,25 @@ void ChecklistManager::loadCsv(const QString &filePath)
     m_currentIndex = 0;
     emit listLoadedChanged();
 
+    const bool isMd = filePath.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive);
+
 #ifdef CHECKLIST_WASM
     setBusy(true);
-    qDebug() << "Fetching CSV:" << filePath;
+    qDebug() << "Fetching file:" << filePath;
     auto *reply = m_nam->get(QNetworkRequest(QUrl(filePath)));
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, filePath]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, filePath, isMd]() {
         reply->deleteLater();
         setBusy(false);
 
         if (reply->error() != QNetworkReply::NoError) {
-            qWarning() << "CSV fetch failed:" << reply->errorString();
+            qWarning() << "File fetch failed:" << reply->errorString();
             return;
         }
 
-        parseCsvContent(QString::fromUtf8(reply->readAll()), filePath);
+        const QString content = QString::fromUtf8(reply->readAll());
+        if (isMd) parseMdContent(content, filePath);
+        else      parseCsvContent(content, filePath);
     });
 
 #else
@@ -194,7 +341,9 @@ void ChecklistManager::loadCsv(const QString &filePath)
 
     QTextStream in(&file);
     in.setEncoding(QStringConverter::Utf8);
-    parseCsvContent(in.readAll(), filePath);
+    const QString content = in.readAll();
+    if (isMd) parseMdContent(content, filePath);
+    else      parseCsvContent(content, filePath);
 #endif
 }
 
@@ -211,6 +360,12 @@ void ChecklistManager::back()
     if (m_currentIndex > 0) { --m_currentIndex; emit currentIndexChanged(); }
 }
 
+void ChecklistManager::restart()
+{
+    m_currentIndex = 0;
+    emit currentIndexChanged();
+}
+
 void ChecklistManager::exitList()
 {
     m_items.clear();
@@ -224,6 +379,30 @@ void ChecklistManager::exitList()
 // ---------------------------------------------------------------------------
 // Accessors
 // ---------------------------------------------------------------------------
+bool ChecklistManager::currentIsTitle() const
+{
+    return validIdx(m_currentIndex, m_items.size())
+        && m_items.at(m_currentIndex).isTitle;
+}
+
+int ChecklistManager::stepCount() const
+{
+    int n = 0;
+    for (const auto &item : m_items)
+        if (!item.isTitle) n++;
+    return n;
+}
+
+int ChecklistManager::stepIndex() const
+{
+    if (!validIdx(m_currentIndex, m_items.size())) return -1;
+    if (m_items.at(m_currentIndex).isTitle) return -1;
+    int idx = 0;
+    for (int i = 0; i < m_currentIndex; ++i)
+        if (!m_items.at(i).isTitle) idx++;
+    return idx;
+}
+
 QString ChecklistManager::currentText() const
 {
     return validIdx(m_currentIndex, m_items.size())

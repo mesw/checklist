@@ -1,8 +1,6 @@
 [
-  "example",
-  "intervalltraining",
-  "krafttraining",
-  "palatschinken",
-  "yoga_flow",
-  "zaehneputzen"
+  {"name": "example", "title": "Welcome! 👋"},
+  {"name": "intervalltraining", "title": "🚴 Intervalltraining"},
+  {"name": "palatschinken", "title": "🥞 Palatschinken Teig"},
+  {"name": "zaehneputzen", "title": "🦷 Zähneputzen"}
 ]

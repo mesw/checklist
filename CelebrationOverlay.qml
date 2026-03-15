@@ -22,12 +22,17 @@ Item {
     signal finished()
 
     function play() {
-        root.visible    = true
-        overlayBg.opacity = 0.96
+        root.visible        = true
+        overlayBg.opacity   = 0.96
         checkCanvas.opacity = 1
         root.checkProgress  = 0
         checkCanvas.requestPaint()
         masterAnim.restart()
+    }
+
+    function reset() {
+        masterAnim.stop()
+        root.visible = false
     }
 
     visible: false

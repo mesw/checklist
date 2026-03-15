@@ -4,14 +4,27 @@ project(checklist VERSION 1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Quick Qml Network)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Quick Qml Network LinguistTools)
 
 qt_standard_project_setup(REQUIRES 6.8)
+
+file(GLOB CHECKLIST_MD_FILES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/checklists/*.md"
+)
 
 qt_add_executable(checklist
     main.cpp
     checklistmanager.cpp
     checklistmanager.h
+    languagemanager.cpp
+    languagemanager.h
+    ${CHECKLIST_MD_FILES}
+    "${CMAKE_SOURCE_DIR}/checklists/index.json"
+)
+
+source_group("Checklists" FILES
+    ${CHECKLIST_MD_FILES}
+    "${CMAKE_SOURCE_DIR}/checklists/index.json"
 )
 
 qt_add_qml_module(checklist
@@ -75,4 +88,62 @@ if(EMSCRIPTEN)
     )
 endif()
 
+# ── Checklists ────────────────────────────────────────────────────────────────
+
+# cmake script that regenerates index.json from the .md files in checklists/
+file(WRITE "${CMAKE_BINARY_DIR}/gen_checklist_index.cmake" [=[
+    file(GLOB md_files LIST_DIRECTORIES false "${CHECKLISTS_DIR}/*.md")
+    list(SORT md_files)
+    set(entries)
+    foreach(f ${md_files})
+        get_filename_component(name "${f}" NAME_WE)
+
+        # Extract title from the first "# " heading in the file
+        set(title "${name}")
+        file(STRINGS "${f}" file_lines REGEX "^# " LIMIT_COUNT 5 ENCODING UTF-8)
+        if(file_lines)
+            list(GET file_lines 0 title_line)
+            string(SUBSTRING "${title_line}" 2 -1 title)
+            string(STRIP "${title}" title)
+            string(REPLACE "**" "" title "${title}")
+        endif()
+
+        # Escape backslash and double-quote for JSON safety
+        string(REPLACE "\\" "\\\\" title "${title}")
+        string(REPLACE "\"" "\\\"" title "${title}")
+
+        list(APPEND entries "  {\"name\": \"${name}\", \"title\": \"${title}\"}")
+    endforeach()
+    list(JOIN entries ",\n" body)
+    file(WRITE "${OUTPUT_FILE}" "[\n${body}\n]\n")
+]=])
+
+# Regenerate index.json whenever any .md file changes
+add_custom_target(checklist_index ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DCHECKLISTS_DIR=${CMAKE_SOURCE_DIR}/checklists
+        -DOUTPUT_FILE=${CMAKE_SOURCE_DIR}/checklists/index.json
+        -P ${CMAKE_BINARY_DIR}/gen_checklist_index.cmake
+    DEPENDS ${CHECKLIST_MD_FILES}
+    COMMENT "Generating checklists/index.json"
+    VERBATIM
+)
+
+# Desktop only: copy checklists/ next to the executable after each build
+if(NOT EMSCRIPTEN)
+    add_custom_command(TARGET checklist POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/checklists"
+            "$<TARGET_FILE_DIR:checklist>/checklists"
+        COMMENT "Copying checklists to output directory"
+        VERBATIM
+    )
+endif()
+
 install(TARGETS checklist RUNTIME DESTINATION bin)
+
+# ── Translations ──────────────────────────────────────────────────────────────
+qt_add_translations(checklist
+    TS_FILES translations/checklist_de.ts
+    RESOURCE_PREFIX /translations
+)

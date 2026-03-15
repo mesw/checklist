@@ -25,14 +25,14 @@ fi
 
 # Collect basenames (no path, no extension), sorted alphabetically
 mapfile -t names < <(
-    find "$CHECKLISTS_DIR" -maxdepth 1 -name "*.csv" -type f \
+    find "$CHECKLISTS_DIR" -maxdepth 1 -name "*.md" -type f \
     | sort \
-    | xargs -I{} basename {} .csv
+    | xargs -I{} basename {} .md
 )
 
 if [ ${#names[@]} -eq 0 ]; then
     echo "[]" > "$OUTPUT"
-    echo "No CSV files found — wrote empty index.json"
+    echo "No MD files found — wrote empty index.json"
     exit 0
 fi
 

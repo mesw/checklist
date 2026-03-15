@@ -13,11 +13,14 @@ Item {
     // ── Sync state on every step change ─────────────────────────────────────
     function resetStep() {
         countdownTimer.stop()
+        celebrationOverlay.reset()
         remainingSeconds   = checklistManager.currentTimerSecs
         autoProceedEnabled = checklistManager.currentAutoProceed
         if (remainingSeconds > 0)
             countdownTimer.start()
         orbitLayer.reset()
+        if (checklistManager.currentIsTitle && !checklistManager.hasNext)
+            celebrationOverlay.play()
     }
 
     Connections {
@@ -119,9 +122,10 @@ Item {
                 id: stepCounter
                 anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                 spacing: ApplicationWindow.window.u * 0.5
+                visible: !checklistManager.currentIsTitle
 
                 Text {
-                    text: (checklistManager.currentIndex + 1).toString()
+                    text: (checklistManager.stepIndex + 1).toString()
                     color: ApplicationWindow.window.clrAmber
                     font { pixelSize: ApplicationWindow.window.u * 4.5; weight: Font.Bold }
                     anchors.verticalCenter: parent.verticalCenter
@@ -133,7 +137,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
-                    text: checklistManager.totalItems.toString()
+                    text: checklistManager.stepCount.toString()
                     color: ApplicationWindow.window.clrMuted
                     font { pixelSize: ApplicationWindow.window.u * 4.5; weight: Font.Medium }
                     anchors.verticalCenter: parent.verticalCenter
@@ -142,6 +146,7 @@ Item {
 
             // Progress bar (anchored below title text)
             Rectangle {
+                visible: !checklistManager.currentIsTitle
                 anchors {
                     bottom: parent.bottom
                     left:  exitBtn.right; leftMargin:  ApplicationWindow.window.u * 3
@@ -152,8 +157,8 @@ Item {
                 color:  "#E7E5E0"
 
                 Rectangle {
-                    width: parent.width * (checklistManager.totalItems > 0
-                        ? (checklistManager.currentIndex + 1) / checklistManager.totalItems : 0)
+                    width: parent.width * (checklistManager.stepCount > 0
+                        ? (checklistManager.stepIndex + 1) / checklistManager.stepCount : 0)
                     height: parent.height; radius: parent.radius
                     color:  ApplicationWindow.window.clrAmber
                     Behavior on width {
@@ -332,7 +337,7 @@ Item {
                                 }
 
                                 Text {
-                                    text:  "auto"
+                                    text:  qsTr("auto")
                                     color: root.autoProceedEnabled
                                                ? ApplicationWindow.window.clrGreen
                                                : ApplicationWindow.window.clrMuted
@@ -408,9 +413,9 @@ Item {
                     property int elapsed: 0
                     onTriggered: {
                         elapsed++
-                        if (elapsed === 30)
+                        if (elapsed === 60)
                             orbitLayer.emojiCount = 1
-                        else if (elapsed > 30 && (elapsed - 30) % 60 === 0)
+                        else if (elapsed > 30 && (elapsed) % 60 === 0)
                             orbitLayer.emojiCount++
                     }
                 }
@@ -420,7 +425,7 @@ Item {
                 // When count changes, distribution adjusts on the next frame —
                 // the gradual repositioning as they orbit looks natural.
                 Repeater {
-                    model: 8
+                    model: 64
                     delegate: Text {
                         visible:        index < orbitLayer.emojiCount
                         text:           checklistManager.currentEmoji
@@ -465,7 +470,7 @@ Item {
                 anchors.fill: parent
                 spacing:      ApplicationWindow.window.u * 3
 
-                // Back
+                // Back — all steps except the start title page
                 Rectangle {
                     visible: checklistManager.hasPrev
                     width:  (parent.width - parent.spacing) / 2
@@ -477,7 +482,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "← Back"; color: ApplicationWindow.window.clrMuted
+                        text: qsTr("← Back"); color: ApplicationWindow.window.clrMuted
                         font { pixelSize: ApplicationWindow.window.u * 4; weight: Font.DemiBold }
                     }
                     MouseArea {
@@ -487,9 +492,31 @@ Item {
                     Behavior on color { ColorAnimation { duration: 80 } }
                 }
 
-                // Next
+                // Start — start title page only (full width, no Back)
                 Rectangle {
-                    visible: checklistManager.hasNext
+                    visible: checklistManager.currentIsTitle && !checklistManager.hasPrev
+                    width:  parent.width
+                    height: parent.height
+                    radius: ApplicationWindow.window.u * 2
+                    color:  startArea.containsPress
+                            ? ApplicationWindow.window.clrAmberDark
+                            : ApplicationWindow.window.clrAmber
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: qsTr("Start →"); color: "white"
+                        font { pixelSize: ApplicationWindow.window.u * 4; weight: Font.Bold }
+                    }
+                    MouseArea {
+                        id: startArea; anchors.fill: parent
+                        onClicked: checklistManager.next()
+                    }
+                    Behavior on color { ColorAnimation { duration: 80 } }
+                }
+
+                // Next — regular steps only
+                Rectangle {
+                    visible: checklistManager.hasNext && !checklistManager.currentIsTitle
                     width:  checklistManager.hasPrev
                             ? (parent.width - parent.spacing) / 2
                             : parent.width
@@ -501,7 +528,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "Next →"; color: "white"
+                        text: qsTr("Next →"); color: "white"
                         font { pixelSize: ApplicationWindow.window.u * 4; weight: Font.Bold }
                     }
                     MouseArea {
@@ -511,9 +538,9 @@ Item {
                     Behavior on color { ColorAnimation { duration: 80 } }
                 }
 
-                // Finish ✓  (last step only)
+                // Finish ✓ — last regular step (no title page in list)
                 Rectangle {
-                    visible: !checklistManager.hasNext
+                    visible: !checklistManager.hasNext && !checklistManager.currentIsTitle
                     width:  checklistManager.hasPrev
                             ? (parent.width - parent.spacing) / 2
                             : parent.width
@@ -526,7 +553,7 @@ Item {
                         spacing: ApplicationWindow.window.u * 1.5
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: "Finish"; color: "white"
+                            text: qsTr("Finish"); color: "white"
                             font { pixelSize: ApplicationWindow.window.u * 4; weight: Font.Bold }
                         }
                         Text {
@@ -538,6 +565,35 @@ Item {
                     MouseArea {
                         id: finishArea; anchors.fill: parent
                         onClicked: celebrationOverlay.play()
+                    }
+                    Behavior on color { ColorAnimation { duration: 80 } }
+                }
+
+                // Restart ↺ — end title page (half width, Back is also shown)
+                Rectangle {
+                    visible: checklistManager.currentIsTitle && !checklistManager.hasNext
+                    width:  (parent.width - parent.spacing) / 2
+                    height: parent.height
+                    radius: ApplicationWindow.window.u * 2
+                    color:  restartArea.containsPress ? "#166534" : "#15803D"
+
+                    Row {
+                        anchors.centerIn: parent
+                        spacing: ApplicationWindow.window.u * 1.5
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "↺"; color: "white"
+                            font { pixelSize: ApplicationWindow.window.u * 4.5; weight: Font.Bold }
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Restart"); color: "white"
+                            font { pixelSize: ApplicationWindow.window.u * 4; weight: Font.Bold }
+                        }
+                    }
+                    MouseArea {
+                        id: restartArea; anchors.fill: parent
+                        onClicked: checklistManager.restart()
                     }
                     Behavior on color { ColorAnimation { duration: 80 } }
                 }
